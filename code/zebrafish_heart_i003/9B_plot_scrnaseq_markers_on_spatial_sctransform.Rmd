@@ -1,0 +1,92 @@
+---
+title: "zebrafish_heart_de_markers"
+author: "Empar Baltasar Pérez"
+date: "3/29/2022"
+knit: (function(inputFile, encoding) {
+  rmarkdown::render(inputFile, encoding = encoding, output_dir = "../../output/images/SCD-VI-i004_integration") })
+output: html_document
+---
+
+```{r setup, include=FALSE}
+# Set visibility, warnings and messages off for every code chunk.
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+```
+
+```{r}
+library(tidyverse)
+library(SeuratDisk)
+library(SeuratData)
+library(Seurat)
+library(lemon)
+library(knitr)
+library(gridExtra)
+library(grid)
+library(filesstrings)
+
+library(cowplot)
+
+knit_print.data.frame <- lemon_print
+```
+
+```{r load data}
+setwd("../..")
+visium_subset <- readRDS("./output/processed_data/SCD-VI-i004/SCD-VI-i004_sctransform_seurat_predictions.rds")
+
+scrnaseq <- readRDS("./output/processed_data/SCD-VI-i004/zebrafish_heart_scrnaseq_sctransform_pca.rds")
+Idents(scrnaseq) <- 'plot.ident2'
+
+scrnaseq_markers <- read.csv("./output/processed_data/SCD-VI-i004/scrnaseq_sctransform_markers_auc.csv", row.names = 1)
+
+seurat_prediction <- visium_subset@assays[["predictions"]]@data %>% t() %>% as.tibble()
+
+```
+
+
+```{r, results = 'asis', fig.height=11, fig.width=17, fig.align='center'}
+for (i in colnames(seurat_prediction)[-length(colnames(seurat_prediction))]){ # remove "max"
+  cat("\n\n\\newpage\n")
+  cat("Celltype:",i)
+  cat("\n")
+
+  top_10 <- scrnaseq_markers[(scrnaseq_markers$cluster==i), ] %>% arrange(desc(avg_log2FC)) %>% head(3)
+  top_10$gene_in_spatial <- top_10$gene %in% visium_subset@assays[["SCT"]]@counts@Dimnames[[1]]
+  print(kable(head(top_10)))
+  cat("\n")
+
+
+  DefaultAssay(visium_subset) <- "predictions"
+
+  plots_1 <- DimPlot(scrnaseq, label = T, group.by="plot.ident2", cells.highlight = WhichCells(scrnaseq, idents = i), repel = TRUE) +
+      NoLegend() +
+      labs(title = "")
+
+  if (sum(seurat_prediction[i]) != 0){
+    plots_2 <- SpatialFeaturePlot(visium_subset, features = i)
+    } else{
+      plots_2 <- textGrob("No data")
+      }
+
+  DefaultAssay(visium_subset) <- "SCT"
+
+  num <- 2
+  for (j in top_10$gene){
+    num <- num + 1
+
+    nam <- paste("plots_", num, sep = "")
+    assign(nam, FeaturePlot(scrnaseq, feature = j))
+
+    if (j %in% visium_subset@assays[["SCT"]]@counts@Dimnames[[1]]){
+      num <- num + 1
+      nam <- paste("plots_", num, sep = "")
+      assign(nam, SpatialFeaturePlot(visium_subset, features = j))
+      } else{
+        num <- num + 1
+        nam <- paste("plots_", num, sep = "")
+        assign(nam, textGrob("No data"))
+        }
+  }
+  print(plot_grid(plots_1, plots_3, plots_5, plots_7, plots_2, plots_4, plots_6, plots_8, ncol = 4, nrow = 2))
+  cat("\n")
+}
+```
+

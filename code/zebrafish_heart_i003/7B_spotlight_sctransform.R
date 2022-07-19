@@ -1,0 +1,43 @@
+library(SPOTlight)
+library(Seurat)
+
+# Load datasets
+scrnaseq <- readRDS("./output/processed_data/SCD-VI-i004/zebrafish_heart_scrnaseq_sctransform_pca.rds")
+visium_subset <- readRDS("./output/processed_data/SCD-VI-i003/SCD-VI-i003_subset_sctransform_pca_clustered.rds")
+mgs <- read.csv("./output/processed_data/SCD-VI-i004/scrnaseq_sctransform_markers_auc.csv", row.names = 1)
+
+# Feature selection
+hvg <- VariableFeatures(scrnaseq)
+
+# keep only those genes that are relevant for each cell identity
+mgs_df <- mgs[mgs$myAUC > 0.7, ]
+
+
+## Cell downsampling
+# split cell indices by identity
+idx.seurat <- split(seq(ncol(scrnaseq)), scrnaseq$plot.ident2)
+# downsample to at most 20 per identity & subset
+n_cells <- 100
+cs_keep <- lapply(idx.seurat, function(i) {
+  n <- length(i)
+  if (n < n_cells) {
+    n_cells <- n
+  }
+  sample(i, n_cells)
+})
+scrnaseq.reduced <- scrnaseq[, unlist(cs_keep)]
+
+## Deconvolution
+res <- SPOTlight(
+  x = GetAssayData(scrnaseq.reduced, slot = "counts", assay = "RNA"),
+  y = GetAssayData(visium_subset, slot = "counts", assay = "Spatial"),
+  groups = unname(scrnaseq.reduced$plot.ident2),
+  mgs = mgs_df,
+  hvg = hvg,
+  weight_id = "myAUC",
+  group_id = "cluster",
+  gene_id = "gene",
+  verbose = TRUE
+)
+
+saveRDS(res, file = "./output/processed_data/SCD-VI-i003/spotlight_sctransform.rds")

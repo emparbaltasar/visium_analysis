@@ -1,0 +1,116 @@
+---
+title: "Differentially expressed markers"
+output:
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+# Set visibility, warnings and messages off for every code chunk.
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+```
+```{r}
+library(tidyverse)
+library(SeuratDisk)
+library(SeuratData)
+library(Seurat)
+library(lemon)
+library(knitr)
+library(gridExtra)
+library(grid)
+
+library(cowplot)
+
+knit_print.data.frame <- lemon_print
+```
+
+
+```{r}
+#Idents(scrnaseq) <- 'subclass'
+```
+
+```{r}
+# Find scRNAseq marker genes
+#scrnaseq_markers <- FindAllMarkers(scrnaseq, only.pos = TRUE)
+#write.csv(scrnaseq_markers, "./output/files/scrnaseq_markers.csv")
+```
+```{r visium data, cache=TRUE}
+visium <- Load10X_Spatial("../data/mouse_brain/brain_spatial",
+                         filename = "filtered_feature_bc_matrix.h5",
+                         slice = "anterior1",
+                         filter.matrix = TRUE)
+visium <- SCTransform(visium, assay = "Spatial", verbose = FALSE)
+visium <- RunPCA(visium, assay = "SCT", verbose = FALSE)
+visium <- FindNeighbors(visium, reduction = "pca", dims = 1:30)
+visium <- FindClusters(visium, verbose = FALSE)
+visium <- RunUMAP(visium, reduction = "pca", dims = 1:30)
+visium_subset <- subset(visium, idents = c(1, 2, 3, 4, 6, 7))
+visium_subset <- subset(visium_subset, anterior1_imagerow > 400 | anterior1_imagecol < 150, invert = TRUE)
+visium_subset <- subset(visium_subset, anterior1_imagerow > 275 & anterior1_imagecol > 370, invert = TRUE)
+visium_subset <- subset(visium_subset, anterior1_imagerow > 250 & anterior1_imagecol > 440, invert = TRUE)
+visium_subset <- SCTransform(visium_subset, assay = 'Spatial', verbose = FALSE) %>% RunPCA(verbose = FALSE)
+
+
+```
+
+```{r scrnaseq data}
+scrnaseq <- LoadH5Seurat("../data/mouse_brain/allen_cortex.h5Seurat")
+Idents(scrnaseq) <- 'subclass'
+
+scrnaseq_markers <- read.csv("../output/files/scrnaseq_markers.csv", row.names = 1)
+
+seurat_prediction <- read.csv("../output/files/seurat_prediction.csv", row.names = 1, check.names=FALSE)
+
+predictions.assay <- readRDS("../output/anchor_prediction.h5Seurat")
+visium_subset[["predictions"]] <- predictions.assay
+```
+
+
+
+```{r, results = 'asis', fig.height=11, fig.width=17, fig.align='center'}
+for (i in colnames(seurat_prediction)[-length(colnames(seurat_prediction))]){ # remove "max"
+  cat("\n\n\\newpage\n")
+  cat("Celltype:",i)
+  cat("\n")
+
+  top_10 <- scrnaseq_markers[(scrnaseq_markers$cluster==i), ] %>% arrange(desc(avg_log2FC)) %>% head(3)
+  top_10$gene_in_spatial <- top_10$gene %in% visium_subset@assays[["SCT"]]@counts@Dimnames[[1]]
+  print(kable(head(top_10)))
+  cat("\n")
+
+
+  DefaultAssay(visium_subset) <- "predictions"
+
+  plots_1 <- DimPlot(scrnaseq, label = T, group.by="subclass", cells.highlight = WhichCells(scrnaseq, idents = i), repel = TRUE) +
+      NoLegend() +
+      labs(title = "")
+
+  if (sum(seurat_prediction[i]) != 0){
+    plots_2 <- SpatialFeaturePlot(visium_subset, features = i)
+    } else{
+      plots_2 <- textGrob("No data")
+      }
+
+  DefaultAssay(visium_subset) <- "SCT"
+
+  num <- 2
+  for (j in top_10$gene){
+    num <- num + 1
+    
+    nam <- paste("plots_", num, sep = "")
+    assign(nam, FeaturePlot(scrnaseq, feature = j))
+
+    if (j %in% visium_subset@assays[["SCT"]]@counts@Dimnames[[1]]){
+      num <- num + 1
+      nam <- paste("plots_", num, sep = "")
+      assign(nam, SpatialFeaturePlot(visium_subset, features = j))
+      } else{
+        num <- num + 1
+        nam <- paste("plots_", num, sep = "")
+        assign(nam, textGrob("No data"))
+        }
+  }
+  print(plot_grid(plots_1, plots_3, plots_5, plots_7, plots_2, plots_4, plots_6, plots_8, ncol = 4, nrow = 2))
+  cat("\n")
+}
+
+```

@@ -1,0 +1,110 @@
+library(Seurat)
+library(ggplot2)
+library(RColorBrewer)
+library(dplyr)
+library(scater)
+library(SPOTlight)
+library(tidyverse)
+
+MyPalette <- colorRampPalette(colors = rev(x = brewer.pal(n = 11, name = "Spectral")))(n = 100)
+
+palettePaired <- c(
+  "#a6cee3", "#1f78b4", "#b2df8a", "#33a02c", "#fb9a99", "#e31a1c",
+  "#fdbf6f", "#ff7f00", "#cab2d6", "#6a3d9a", "#ffff99", "#fff116",
+  "#d8a283", "#b15928", "#b0c288", "#81b806", "#bcffde", "#00ff82",
+  "#e7aee0", "#a40192", "#d77070", "#ff0052", "#c6bfbf", "#6a5b5b"
+)
+
+visium_subset <- readRDS("./output/processed_data/mouse_brain/mouse_brain_spatial_cortex_sctransform_seurat_predictions.rds")
+
+DefaultAssay(visium_subset) <- "prediction.score.id"
+
+for (i in rownames(visium_subset@assays$prediction.score.id@data)) {
+  p <- SpatialFeaturePlot(visium_subset, features = i, pt.size.factor = 1, crop = FALSE) +
+    ggplot2::scale_fill_gradientn(colours = MyPalette, limits = c(0.0, 1.001), breaks = c(0.0, 0.5, 1.0))
+
+  if (grepl("/", i)) {
+    i <- sub("/", "-", i)
+  }
+  if (grepl(" ", i)) {
+    i <- sub(" ", "_", i)
+  }
+  dir.create("./output/images/mouse_brain_integration")
+  ggsave(paste("./output/images/mouse_brain_integration/seurat_sctransform_prediction_", i, ".png", sep = ""))
+}
+
+# Plot spatial scatterpie
+seurat_prediction <- visium_subset@assays[["prediction.score.id"]]@data %>% t()
+
+pal <- readRDS("./output/processed_data/mouse_brain/spatial_scatterpie_palette.rds")
+
+plot <- plotSpatialScatterpie(
+  x = visium_subset,
+  y = seurat_prediction,
+  cell_types = colnames(seurat_prediction),
+  slice = Images(visium_subset)[1],
+  img = FALSE,
+  scatterpie_alpha = 1,
+  pie_scale = 0.4
+) +
+  scale_fill_manual(
+    values = pal,
+    breaks = names(pal)
+  ) +
+  scale_y_reverse()
+ggsave("./output/images/mouse_brain_integration/seurat_sctransform_prediction_spatial_scatterpie.png")
+ggsave("./output/images/mouse_brain_integration/seurat_sctransform_prediction_spatial_scatterpie.pdf")
+
+# Plot spatial scatterpie with 0.1 threshold
+seurat_prediction_filtered <- seurat_prediction
+seurat_prediction_filtered[seurat_prediction_filtered < 0.1] <- 0
+
+plotSpatialScatterpie(
+  x = visium_subset,
+  y = seurat_prediction_filtered,
+  cell_types = colnames(seurat_prediction),
+  pie_scale = 0.4
+) +
+  scale_fill_manual(
+    values = pal[names(pal) %in% names(colSums(seurat_prediction) != 0)[colSums(seurat_prediction) != 0]],
+    breaks = names(pal)[names(pal) %in% names(colSums(seurat_prediction) != 0)[colSums(seurat_prediction) != 0]]
+  ) +
+  scale_y_reverse() +
+  theme(legend.title = element_blank(), legend.text = element_text(size = 6)) +
+  guides(fill = guide_legend(ncol = 1))
+
+ggsave("./output/images/mouse_brain_integration/seurat_sctransform_prediction_filtered_spatial_scatterpie.png")
+ggsave("./output/images/mouse_brain_integration/seurat_sctransform_prediction_spatial_filtered_scatterpie.pdf")
+
+
+# Compare proportions of prediction with proportions in scrnaseq dataset
+scrnaseq <- readRDS("./output/processed_data/mouse_brain/mouse_brain_scrnaseq_sctransform_pca.rds")
+scRNAseq_proportions <- table(scrnaseq@meta.data[["subclass"]]) / length(scrnaseq@meta.data[["subclass"]])
+
+seurat_prediction <- visium_subset@assays[["prediction.score.id"]]@data %>% t()
+
+seurat_prediction <- colMeans(seurat_prediction)
+
+proportions_comparison <- rbind(seurat_prediction, scRNAseq_proportions)
+proportions_comparison <- as.data.frame(proportions_comparison) %>%
+  t() %>%
+  as.data.frame()
+
+
+proportions_comparison %>%
+  rownames_to_column("cell_type") %>%
+  ggplot(aes(x = scRNAseq_proportions, y = seurat_prediction)) +
+  scale_color_manual(values = pal) +
+  theme_bw() +
+  theme(
+    panel.border = element_blank(), panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"),
+    axis.text.x = element_text(angle = 45, hjust = 1), legend.title = element_blank(),
+    aspect.ratio = 1 / 1, legend.text = element_text(size = 6)
+  ) +
+  geom_point(aes(color = cell_type)) +
+  stat_cor(method = "pearson", label.x = 0.08, label.y = 0.3, size = 3) +
+  stat_cor(method = "spearman", label.x = 0.08, label.y = 0.27, cor.coef.name = "rho", size = 3)
+
+
+ggsave("./output/images/mouse_brain_integration/seurat_sctransform_comparison_celltype_proportions_scatter.png", width = 5, height = 4)
